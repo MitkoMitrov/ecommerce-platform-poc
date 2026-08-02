@@ -1,0 +1,26 @@
+using Commerce.Api.Domain.Carts;
+using Commerce.Api.Domain.Products;
+using Microsoft.EntityFrameworkCore;
+
+namespace Commerce.Api.Infrastructure.Persistence;
+
+public sealed class CommerceDbContext : DbContext
+{
+    public CommerceDbContext(DbContextOptions<CommerceDbContext> options)
+        : base(options)
+    {
+    }
+
+    public DbSet<Product> Products => Set<Product>();
+
+    public DbSet<Cart> Carts => Set<Cart>();
+
+    public DbSet<CartItem> CartItems => Set<CartItem>();
+
+    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    {
+        base.OnModelCreating(modelBuilder);
+
+        modelBuilder.ApplyConfigurationsFromAssembly(typeof(CommerceDbContext).Assembly);
+    }
+}
