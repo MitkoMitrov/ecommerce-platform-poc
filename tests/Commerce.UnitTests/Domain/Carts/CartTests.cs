@@ -572,4 +572,59 @@ public class CartTests
         Assert.Equal("EUR", cart.Currency);
         Assert.Equal(addedAtUtc, cart.UpdatedAtUtc);
     }
+
+    [Fact]
+    public void ClearAfterPurchase_WithNonEmptyCart_EmptiesCartPreservesIdAndUpdatesTimestamp()
+    {
+        var createdAtUtc = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        var addedAtUtc = new DateTimeOffset(2026, 1, 2, 0, 0, 0, TimeSpan.Zero);
+        var clearedAtUtc = new DateTimeOffset(2026, 1, 3, 0, 0, 0, TimeSpan.Zero);
+        var firstProductId = Guid.Parse("11111111-1111-1111-1111-111111111111");
+        var secondProductId = Guid.Parse("22222222-2222-2222-2222-222222222222");
+        var cart = Cart.Create(createdAtUtc);
+        var cartId = cart.Id;
+        cart.AddItem(firstProductId, "Widget", 10.00m, "EUR", 2, addedAtUtc);
+        cart.AddItem(secondProductId, "Other Widget", 5.00m, "EUR", 1, addedAtUtc);
+
+        cart.ClearAfterPurchase(clearedAtUtc);
+
+        Assert.Equal(cartId, cart.Id);
+        Assert.Empty(cart.Items);
+        Assert.Equal(0m, cart.Subtotal);
+        Assert.Null(cart.Currency);
+        Assert.Equal(clearedAtUtc, cart.UpdatedAtUtc);
+    }
+
+    [Fact]
+    public void ClearAfterPurchase_WithEmptyCart_ThrowsAndLeavesStateUnchanged()
+    {
+        var createdAtUtc = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        var attemptedClearAtUtc = new DateTimeOffset(2026, 1, 2, 0, 0, 0, TimeSpan.Zero);
+        var cart = Cart.Create(createdAtUtc);
+
+        Assert.Throws<InvalidOperationException>(() => cart.ClearAfterPurchase(attemptedClearAtUtc));
+
+        AssertEmptyCartRemainsUnchanged(cart, createdAtUtc);
+    }
+
+    [Fact]
+    public void ClearAfterPurchase_WithTimestampBeforeCreation_ThrowsAndLeavesExistingStateUnchanged()
+    {
+        var createdAtUtc = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        var addedAtUtc = new DateTimeOffset(2026, 1, 2, 0, 0, 0, TimeSpan.Zero);
+        var invalidClearedAtUtc = createdAtUtc.AddSeconds(-1);
+        var productId = Guid.Parse("11111111-1111-1111-1111-111111111111");
+        var cart = Cart.Create(createdAtUtc);
+        cart.AddItem(productId, "Widget", 10.00m, "EUR", 2, addedAtUtc);
+
+        var exception = Assert.Throws<ArgumentOutOfRangeException>(
+            () => cart.ClearAfterPurchase(invalidClearedAtUtc));
+
+        Assert.Equal("updatedAtUtc", exception.ParamName);
+        var item = Assert.Single(cart.Items);
+        Assert.Equal("Widget", item.ProductNameSnapshot);
+        Assert.Equal(2, item.Quantity);
+        Assert.Equal("EUR", cart.Currency);
+        Assert.Equal(addedAtUtc, cart.UpdatedAtUtc);
+    }
 }

@@ -1,5 +1,12 @@
 import { apiClient } from './apiClient'
-import type { AddCartItemRequest, Cart, Product, UpdateCartItemRequest } from './contracts'
+import type {
+  AddCartItemRequest,
+  Cart,
+  Product,
+  Purchase,
+  PurchaseCartResponse,
+  UpdateCartItemRequest,
+} from './contracts'
 
 export function getProducts(signal?: AbortSignal): Promise<Product[]> {
   return apiClient.get<Product[]>('/api/products', signal)
@@ -36,4 +43,12 @@ export function removeCartItem(
   signal?: AbortSignal,
 ): Promise<void> {
   return apiClient.delete<void>(`/api/carts/${cartId}/items/${productId}`, signal)
+}
+
+export function purchaseCart(cartId: string, signal?: AbortSignal): Promise<PurchaseCartResponse> {
+  return apiClient.post<PurchaseCartResponse>(`/api/carts/${cartId}/purchase`, undefined, signal)
+}
+
+export function getPurchaseHistory(signal?: AbortSignal): Promise<Purchase[]> {
+  return apiClient.get<Purchase[]>('/api/purchases', signal)
 }

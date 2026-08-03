@@ -133,6 +133,19 @@ public sealed class Cart
         return true;
     }
 
+    public void ClearAfterPurchase(DateTimeOffset updatedAtUtc)
+    {
+        ValidateUpdatedAtUtc(updatedAtUtc);
+
+        if (_items.Count == 0)
+        {
+            throw new InvalidOperationException($"Cart '{Id}' has no items and cannot be purchased.");
+        }
+
+        _items.Clear();
+        UpdatedAtUtc = updatedAtUtc;
+    }
+
     private CartItem? FindItem(Guid productId)
     {
         return _items.Find(item => item.ProductId == productId);

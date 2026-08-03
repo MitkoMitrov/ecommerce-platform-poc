@@ -1,5 +1,6 @@
 using Commerce.Api.Features.Carts;
 using Commerce.Api.Features.Products;
+using Commerce.Api.Features.Purchases;
 using Commerce.Api.Infrastructure.Errors;
 using Commerce.Api.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
@@ -30,6 +31,7 @@ builder.Services.AddDbContext<CommerceDbContext>(options => options.UseNpgsql(co
 builder.Services.AddSingleton(TimeProvider.System);
 
 builder.Services.AddScoped<CartService>();
+builder.Services.AddScoped<PurchaseService>();
 
 builder.Services
     .AddHealthChecks()
@@ -63,6 +65,8 @@ app.MapHealthChecks("/health/ready", new HealthCheckOptions
 app.MapProductEndpoints();
 
 app.MapCartEndpoints();
+
+app.MapPurchaseEndpoints();
 
 app.Run();
 

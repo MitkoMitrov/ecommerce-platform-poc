@@ -1,10 +1,15 @@
+import { useState } from 'react'
 import { CartPanel } from './features/cart/CartPanel'
 import { useCartSession } from './features/cart/useCartSession'
 import { ProductCatalog } from './features/products/ProductCatalog'
+import { PurchaseHistory } from './features/purchases/PurchaseHistory'
+
+type Tab = 'shop' | 'history'
 
 function App() {
   const session = useCartSession()
   const itemCount = session.data?.items.reduce((total, item) => total + item.quantity, 0) ?? 0
+  const [activeTab, setActiveTab] = useState<Tab>('shop')
 
   return (
     <>
@@ -22,9 +27,43 @@ function App() {
           </div>
         </div>
       </header>
+
+      <div className="tabs" role="tablist" aria-label="Sections">
+        <button
+          type="button"
+          role="tab"
+          id="shop-tab"
+          aria-selected={activeTab === 'shop'}
+          aria-controls="shop-panel"
+          className={`tab-button${activeTab === 'shop' ? ' tab-button--active' : ''}`}
+          onClick={() => setActiveTab('shop')}
+        >
+          Shop
+        </button>
+        <button
+          type="button"
+          role="tab"
+          id="history-tab"
+          aria-selected={activeTab === 'history'}
+          aria-controls="history-panel"
+          className={`tab-button${activeTab === 'history' ? ' tab-button--active' : ''}`}
+          onClick={() => setActiveTab('history')}
+        >
+          Purchase History
+        </button>
+      </div>
+
       <main className="app-main">
-        <ProductCatalog cartId={session.data?.id} />
-        <CartPanel />
+        {activeTab === 'shop' ? (
+          <div id="shop-panel" role="tabpanel" aria-labelledby="shop-tab" style={{ display: 'contents' }}>
+            <ProductCatalog cartId={session.data?.id} />
+            <CartPanel />
+          </div>
+        ) : (
+          <div id="history-panel" role="tabpanel" aria-labelledby="history-tab" className="history-panel">
+            <PurchaseHistory />
+          </div>
+        )}
       </main>
     </>
   )

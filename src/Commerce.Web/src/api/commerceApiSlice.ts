@@ -5,10 +5,19 @@ import {
   createCart,
   getCart,
   getProducts,
+  getPurchaseHistory,
+  purchaseCart,
   removeCartItem,
   updateCartItemQuantity,
 } from './commerceApi'
-import type { AddCartItemRequest, Cart, Product, UpdateCartItemRequest } from './contracts'
+import type {
+  AddCartItemRequest,
+  Cart,
+  Product,
+  Purchase,
+  PurchaseCartResponse,
+  UpdateCartItemRequest,
+} from './contracts'
 
 const CART_STORAGE_KEY = 'commerce.cartId'
 
@@ -94,7 +103,7 @@ async function ensureCartSession(signal?: AbortSignal): Promise<Cart> {
 export const commerceApi = createApi({
   reducerPath: 'commerceApi',
   baseQuery: fakeBaseQuery<SerializedApiError>(),
-  tagTypes: ['Cart'],
+  tagTypes: ['Cart', 'PurchaseHistory'],
   endpoints: (builder) => ({
     getProducts: builder.query<Product[], void>({
       queryFn: async (_arg, api) => {
@@ -174,6 +183,39 @@ export const commerceApi = createApi({
       },
       invalidatesTags: ['Cart'],
     }),
+
+    purchaseCart: builder.mutation<PurchaseCartResponse, { cartId: string }>({
+      queryFn: async ({ cartId }) => {
+        try {
+          const data = await purchaseCart(cartId)
+          return { data }
+        } catch (error) {
+          return { error: toSerializedError(error) }
+        }
+      },
+      invalidatesTags: ['PurchaseHistory'],
+      async onQueryStarted(_arg, { dispatch, queryFulfilled }) {
+        try {
+          const { data } = await queryFulfilled
+          dispatch(commerceApi.util.upsertQueryData('getCartSession', undefined, data.cart))
+        } catch {
+          // Mutation failed — leave the cached Cart untouched so existing items stay visible.
+          // The error itself is surfaced via the mutation hook's own isError/error result.
+        }
+      },
+    }),
+
+    getPurchaseHistory: builder.query<Purchase[], void>({
+      queryFn: async (_arg, api) => {
+        try {
+          const data = await getPurchaseHistory(api.signal)
+          return { data }
+        } catch (error) {
+          return { error: toSerializedError(error) }
+        }
+      },
+      providesTags: ['PurchaseHistory'],
+    }),
   }),
 })
 
@@ -183,4 +225,6 @@ export const {
   useAddCartItemMutation,
   useUpdateCartItemQuantityMutation,
   useRemoveCartItemMutation,
+  usePurchaseCartMutation,
+  useGetPurchaseHistoryQuery,
 } = commerceApi

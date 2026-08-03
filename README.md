@@ -4,16 +4,27 @@ A focused proof-of-concept e-commerce **Cart** vertical slice: a .NET 10 Minimal
 
 ## Proof-of-concept scope
 
-This repository implements exactly one vertical slice — Products and Cart — end to end:
+This repository implements exactly one vertical slice — Products, Cart, and a minimal Purchase record — end to end:
 
 - Product listing (active products only).
 - Cart creation and persistence, restored across page reloads via a stored Cart ID.
 - Add an item to the Cart.
 - Update a Cart item's quantity.
 - Remove a Cart item.
+- Record a **Purchase** from a non-empty Cart: an immutable snapshot of the Cart's items and totals is persisted, and the Cart is atomically cleared (same Cart ID, empty items) in one database transaction.
+- View a global **Purchase History** of every recorded Purchase, newest first.
 - PostgreSQL persistence via EF Core, with an automatically-applied migration and idempotent seed data on startup.
-- A React frontend for the full Product/Cart flow, including loading, empty, error and retry states.
+- A React frontend for the full Product/Cart/Purchase flow, including loading, empty, error and retry states, and an accessible Shop / Purchase History tab toggle (no router).
 - Request validation, RFC 7807 `ProblemDetails` error responses (with a `traceId`), health check endpoints, and automated tests on both backend and frontend.
+
+### Purchase — what this is, and is not
+
+The Purchase feature is a **demo-only** record of a completed Cart, added on top of the original Cart slice:
+
+- **No real payment is processed.** There is no payment provider integration, no card data is collected or stored, and the UI never claims a payment occurred — only that a demo Purchase snapshot was recorded.
+- **Purchase History is global and unscoped.** There is no authentication in this proof of concept, so `GET /api/purchases` returns every Purchase ever recorded, for anyone. A production system would scope this list to the authenticated user or organization.
+- **This is not a full checkout or Order lifecycle.** There are no order statuses, no shipping, no tax calculation, no inventory reservation, and no refund/cancellation flow. A Purchase is a single, immutable, one-shot snapshot — it is created once and never transitions state.
+- **Concurrent duplicate Purchase attempts are rejected.** A single request atomically snapshots and clears a Cart in one `SaveChanges` call, and the frontend disables the Purchase button while a request is pending. If two purchase requests for the same Cart genuinely race, both read the Cart as non-empty, but only one's `SaveChanges` can successfully delete the Cart's item rows — Postgres serializes the two concurrent deletes, and the second one affects zero rows because the first already committed. EF Core detects that as a `DbUpdateConcurrencyException`, which the existing `GlobalExceptionHandler` maps to `409 Conflict`. This falls out of the existing no-FK, delete-based `ClearAfterPurchase` design — no explicit row-version/concurrency-token column was added. It is covered by an integration test (`PurchaseCart_ConcurrentRequestsForSameCart_ExactlyOneSucceeds`) that issues two concurrent purchase requests for one Cart and asserts exactly one `201 Created`, one `409 Conflict`, and exactly one persisted Purchase.
 
 ### Implemented PoC vs. target architecture
 
@@ -28,15 +39,15 @@ This repository intentionally implements a **small, complete slice**, not the fu
 ├── global.json                     # Pins the .NET SDK version
 ├── src/
 │   ├── Commerce.Api/                # ASP.NET Core Minimal API backend
-│   │   ├── Domain/                  # Product, Cart, CartItem — entities and invariants
-│   │   ├── Features/                # Minimal API endpoint groups (Products, Carts)
+│   │   ├── Domain/                  # Product, Cart/CartItem, Purchase/PurchaseItem — entities and invariants
+│   │   ├── Features/                # Minimal API endpoint groups (Products, Carts, Purchases)
 │   │   ├── Infrastructure/          # EF Core DbContext, configurations, migrations, error handling
 │   │   └── Program.cs
 │   └── Commerce.Web/                 # React + TypeScript frontend (Vite)
 │       └── src/
 │           ├── api/                  # Fetch client + RTK Query API slice
 │           ├── app/                  # Redux store
-│           ├── features/             # Cart and Product UI features
+│           ├── features/             # Cart, Product, and Purchase UI features
 │           └── ...
 └── tests/
     ├── Commerce.UnitTests/           # Domain-model unit tests (xUnit)
@@ -111,7 +122,7 @@ The dev server proxies `/api` and `/health` to the backend on `http://127.0.0.1:
 
 ### 4. Open the app
 
-Visit **http://127.0.0.1:5173**. Adding, updating, and removing Cart items should work end to end against the real backend and database.
+Visit **http://127.0.0.1:5173**. Adding, updating, and removing Cart items, recording a Purchase, and viewing Purchase History should all work end to end against the real backend and database.
 
 ## Expected local URLs
 
@@ -126,6 +137,22 @@ Visit **http://127.0.0.1:5173**. Adding, updating, and removing Cart items shoul
 
 The `http` launch profile used above sets `ASPNETCORE_ENVIRONMENT=Development`, which is what exposes `/openapi/v1.json`; the endpoint is not mapped in other environments.
 
+## API endpoints
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/api/products` | List active Products. |
+| POST | `/api/carts` | Create a new Cart. |
+| GET | `/api/carts/{cartId}` | Get a Cart by ID. |
+| POST | `/api/carts/{cartId}/items` | Add a Product to a Cart. |
+| PUT | `/api/carts/{cartId}/items/{productId}` | Update a Cart item's quantity. |
+| DELETE | `/api/carts/{cartId}/items/{productId}` | Remove a Cart item. |
+| POST | `/api/carts/{cartId}/purchase` | Record a Purchase from a non-empty Cart and atomically clear it. Returns the Purchase and the now-empty Cart. |
+| GET | `/api/purchases` | List all recorded Purchases (global, newest first). |
+| GET | `/api/purchases/{purchaseId}` | Get a single recorded Purchase. |
+| GET | `/health/live` | Liveness health check. |
+| GET | `/health/ready` | Readiness health check (PostgreSQL reachability). |
+
 ## Backend verification
 
 From the repository root:
@@ -136,7 +163,7 @@ dotnet build ECommercePlatform.sln --configuration Release
 dotnet test ECommercePlatform.sln --configuration Release
 ```
 
-Expected: a clean build with 0 warnings and 0 errors, and all backend tests passing (49 unit tests + 24 integration tests).
+Expected: a clean build with 0 warnings and 0 errors, and all backend tests passing (68 unit tests + 38 integration tests).
 
 **The integration test project uses [Testcontainers](https://testcontainers.com/) to start a real, disposable PostgreSQL container for each test run — Docker must be running for `dotnet test` to succeed.** No manually-started database is required for the tests themselves; Testcontainers manages the container's full lifecycle automatically.
 
@@ -151,7 +178,7 @@ npm test -- --run
 npm run build
 ```
 
-Expected: a clean install, 0 lint errors/warnings, all frontend tests passing (26 tests), and a successful production build under `dist/`.
+Expected: a clean install, 0 lint errors/warnings, all frontend tests passing (39 tests), and a successful production build under `dist/`.
 
 The frontend uses **Redux Toolkit and RTK Query** (`@reduxjs/toolkit`, `react-redux`) as the single owner of server/remote state — product and cart data are fetched, cached, and mutated through one RTK Query API slice (`src/api/commerceApiSlice.ts`); there is no separate client-side business-state store.
 
@@ -163,13 +190,14 @@ The frontend uses **Redux Toolkit and RTK Query** (`@reduxjs/toolkit`, `react-re
 
 The following are deliberately **not** implemented in this proof of concept, regardless of how they may be described in the separate architecture documents:
 
-- Authentication or authorization of any kind.
-- Checkout, payment processing, or order management.
-- Inventory reservation.
+- Authentication or authorization of any kind. (Purchase History is therefore global/unscoped — see "Purchase — what this is, and is not" above.)
+- Real payment processing, payment provider integration, or any handling of card data.
+- Shipping, tax calculation, or inventory reservation.
+- A full checkout workflow or Order lifecycle — no order statuses, no cancellations, no refunds. Recording a Purchase is a single, immutable, one-shot snapshot of a Cart, not an Order.
 - A message broker or any asynchronous/event-driven processing (e.g. RabbitMQ, outbox/inbox).
 - Distributed deployment, multi-region infrastructure, or Kubernetes.
 - Search infrastructure (e.g. Elasticsearch), caching infrastructure (e.g. Redis), or a secrets manager.
-- Optimistic concurrency control — concurrent writes to the same Cart are resolved last-write-wins; no version/conflict check exists.
+- Optimistic concurrency control — concurrent Cart item writes (add/update-quantity/remove racing with each other) are resolved last-write-wins; no version/conflict check exists. (Concurrent duplicate Purchase attempts are the one exception — see "Purchase — what this is, and is not" above.)
 - CI/CD — there is currently no automated pipeline in this repository; the commands above must be run locally.
 
 ## Troubleshooting

@@ -1,5 +1,5 @@
 import { http, HttpResponse } from 'msw'
-import type { Cart, CartItem, Product } from '../api/contracts'
+import type { Cart, CartItem, Product, Purchase, PurchaseCartResponse } from '../api/contracts'
 
 export const activeProducts: Product[] = [
   { id: '22222222-2222-2222-2222-222222222222', name: 'Mechanical Keyboard', unitPrice: 89.99, currency: 'EUR' },
@@ -16,9 +16,14 @@ interface StoredCart {
 const carts = new Map<string, StoredCart>()
 let cartCounter = 0
 
+const purchases: Purchase[] = []
+let purchaseCounter = 0
+
 export function resetMockData(): void {
   carts.clear()
   cartCounter = 0
+  purchases.length = 0
+  purchaseCounter = 0
 }
 
 export function problem(status: number, title: string, detail?: string) {
@@ -116,4 +121,35 @@ export const handlers = [
     stored.items.delete(params.productId as string)
     return new HttpResponse(null, { status: 204 })
   }),
+
+  http.post('/api/carts/:cartId/purchase', ({ params }) => {
+    const stored = carts.get(params.cartId as string)
+    if (!stored) {
+      return problem(404, 'Resource not found', `Cart '${params.cartId}' was not found.`)
+    }
+
+    const cartBeforePurchase = toCartResponse(stored)
+    if (cartBeforePurchase.items.length === 0) {
+      return problem(409, 'Conflict', `Cart '${params.cartId}' is empty and cannot be purchased.`)
+    }
+
+    purchaseCounter += 1
+    const purchase: Purchase = {
+      id: `purchase-${purchaseCounter}`,
+      cartId: stored.id,
+      purchasedAtUtc: `2026-02-${String(purchaseCounter).padStart(2, '0')}T00:00:00.000Z`,
+      currency: cartBeforePurchase.currency ?? 'EUR',
+      total: cartBeforePurchase.subtotal,
+      items: cartBeforePurchase.items,
+    }
+    purchases.unshift(purchase)
+
+    stored.items.clear()
+    const clearedCart = toCartResponse(stored)
+
+    const response: PurchaseCartResponse = { purchase, cart: clearedCart }
+    return HttpResponse.json(response, { status: 201 })
+  }),
+
+  http.get('/api/purchases', () => HttpResponse.json(purchases)),
 ]

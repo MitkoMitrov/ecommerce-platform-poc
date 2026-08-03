@@ -451,3 +451,281 @@ describe('Commerce Cart application', () => {
     expect(subtotalRow.textContent).not.toContain('€')
   })
 })
+
+describe('Purchase and Purchase History', () => {
+  it('disables Purchase for an empty Cart', async () => {
+    renderApp()
+
+    const purchaseButton = await screen.findByRole('button', { name: 'Purchase' })
+    expect(purchaseButton).toBeDisabled()
+  })
+
+  it('enables Purchase for a non-empty Cart', async () => {
+    const productId = activeProducts[0].id
+    const cartId = await seedExistingCart([{ productId, quantity: 1 }])
+    window.localStorage.setItem(CART_STORAGE_KEY, cartId)
+
+    renderApp()
+
+    const purchaseButton = await screen.findByRole('button', { name: 'Purchase' })
+    await waitFor(() => expect(purchaseButton).toBeEnabled())
+  })
+
+  it('sends only the Cart ID through the route with no client price/total payload', async () => {
+    let capturedMethod = ''
+    let capturedBody = ''
+    const productId = activeProducts[0].id
+    const cartId = await seedExistingCart([{ productId, quantity: 2 }])
+    window.localStorage.setItem(CART_STORAGE_KEY, cartId)
+
+    server.use(
+      http.post('/api/carts/:cartId/purchase', async ({ request, params }) => {
+        capturedMethod = request.method
+        capturedBody = await request.text()
+        return HttpResponse.json(
+          {
+            purchase: {
+              id: 'purchase-captured',
+              cartId: params.cartId,
+              purchasedAtUtc: '2026-01-01T00:00:00.000Z',
+              currency: 'EUR',
+              total: 59.98,
+              items: [],
+            },
+            cart: {
+              id: params.cartId,
+              createdAtUtc: '2026-01-01T00:00:00.000Z',
+              updatedAtUtc: '2026-01-01T00:00:00.000Z',
+              currency: null,
+              subtotal: 0,
+              items: [],
+            },
+          },
+          { status: 201 },
+        )
+      }),
+    )
+
+    const user = userEvent.setup()
+    renderApp()
+
+    const purchaseButton = await screen.findByRole('button', { name: 'Purchase' })
+    await user.click(purchaseButton)
+
+    await waitFor(() => expect(capturedMethod).toBe('POST'))
+    expect(capturedBody).toBe('')
+  })
+
+  it('disables Purchase while the request is pending', async () => {
+    const productId = activeProducts[0].id
+    const cartId = await seedExistingCart([{ productId, quantity: 1 }])
+    window.localStorage.setItem(CART_STORAGE_KEY, cartId)
+
+    server.use(
+      http.post('/api/carts/:cartId/purchase', async ({ params }) => {
+        await delay(50)
+        return HttpResponse.json(
+          {
+            purchase: {
+              id: 'purchase-pending',
+              cartId: params.cartId,
+              purchasedAtUtc: '2026-01-01T00:00:00.000Z',
+              currency: 'EUR',
+              total: 29.99,
+              items: [],
+            },
+            cart: {
+              id: params.cartId,
+              createdAtUtc: '2026-01-01T00:00:00.000Z',
+              updatedAtUtc: '2026-01-01T00:00:00.000Z',
+              currency: null,
+              subtotal: 0,
+              items: [],
+            },
+          },
+          { status: 201 },
+        )
+      }),
+    )
+
+    const user = userEvent.setup()
+    renderApp()
+
+    const purchaseButton = await screen.findByRole('button', { name: 'Purchase' })
+    await user.click(purchaseButton)
+
+    expect(await screen.findByRole('button', { name: 'Processing purchase…' })).toBeDisabled()
+  })
+
+  it('shows a confirmation and the server-returned empty Cart with the same ID after a successful purchase', async () => {
+    const productId = activeProducts[0].id
+    const cartId = await seedExistingCart([{ productId, quantity: 2 }])
+    window.localStorage.setItem(CART_STORAGE_KEY, cartId)
+
+    const user = userEvent.setup()
+    renderApp()
+
+    await screen.findByText(activeProducts[0].name, { selector: '.cart-item__name' })
+    const purchaseButton = await screen.findByRole('button', { name: 'Purchase' })
+    await user.click(purchaseButton)
+
+    expect(await screen.findByText(/Purchase confirmed/)).toBeInTheDocument()
+    await screen.findByText(/Your cart is empty\./)
+    expect(window.localStorage.getItem(CART_STORAGE_KEY)).toBe(cartId)
+    expect(await screen.findByText(`Cart ID: ${cartId}`)).toBeInTheDocument()
+  })
+
+  it('keeps existing Cart items visible and shows ProblemDetails after a failed purchase', async () => {
+    const productId = activeProducts[0].id
+    const cartId = await seedExistingCart([{ productId, quantity: 1 }])
+    window.localStorage.setItem(CART_STORAGE_KEY, cartId)
+
+    server.use(
+      http.post('/api/carts/:cartId/purchase', () =>
+        problem(409, 'Conflict', 'Cart is empty and cannot be purchased.'),
+      ),
+    )
+
+    const user = userEvent.setup()
+    renderApp()
+
+    await screen.findByText(activeProducts[0].name, { selector: '.cart-item__name' })
+    const purchaseButton = await screen.findByRole('button', { name: 'Purchase' })
+    await user.click(purchaseButton)
+
+    expect(await screen.findByText('Cart is empty and cannot be purchased.')).toBeInTheDocument()
+    expect(screen.getByText(activeProducts[0].name, { selector: '.cart-item__name' })).toBeInTheDocument()
+  })
+
+  it('selects the Purchase History tab without a router', async () => {
+    const user = userEvent.setup()
+    renderApp()
+
+    const historyTab = await screen.findByRole('tab', { name: 'Purchase History' })
+    await user.click(historyTab)
+
+    expect(historyTab).toHaveAttribute('aria-selected', 'true')
+    expect(await screen.findByRole('heading', { name: 'Purchase History' })).toBeInTheDocument()
+  })
+
+  it('shows a loading state for Purchase History', async () => {
+    server.use(
+      http.get('/api/purchases', async () => {
+        await delay(50)
+        return HttpResponse.json([])
+      }),
+    )
+
+    const user = userEvent.setup()
+    renderApp()
+
+    const historyTab = await screen.findByRole('tab', { name: 'Purchase History' })
+    await user.click(historyTab)
+
+    expect(await screen.findByText('Loading purchase history…')).toBeInTheDocument()
+  })
+
+  it('shows "No purchases yet." for empty Purchase History', async () => {
+    const user = userEvent.setup()
+    renderApp()
+
+    const historyTab = await screen.findByRole('tab', { name: 'Purchase History' })
+    await user.click(historyTab)
+
+    expect(await screen.findByText('No purchases yet.')).toBeInTheDocument()
+  })
+
+  it('renders persisted Purchase data using server-returned totals', async () => {
+    const product = activeProducts[0]
+    server.use(
+      http.get('/api/purchases', () =>
+        HttpResponse.json([
+          {
+            id: 'purchase-fixed',
+            cartId: 'cart-fixed',
+            purchasedAtUtc: '2026-01-05T10:00:00.000Z',
+            currency: 'EUR',
+            total: 777.77,
+            items: [
+              {
+                productId: product.id,
+                productName: product.name,
+                unitPrice: product.unitPrice,
+                currency: 'EUR',
+                quantity: 2,
+                lineTotal: 777.77,
+              },
+            ],
+          },
+        ]),
+      ),
+    )
+
+    const user = userEvent.setup()
+    renderApp()
+
+    const historyTab = await screen.findByRole('tab', { name: 'Purchase History' })
+    await user.click(historyTab)
+
+    expect(await screen.findByText('Purchase ID: purchase-fixed')).toBeInTheDocument()
+    expect(screen.getByText('Cart ID: cart-fixed')).toBeInTheDocument()
+    expect(screen.getByText(product.name)).toBeInTheDocument()
+    expect(screen.getAllByText(formatMoney(777.77, 'EUR')).length).toBeGreaterThan(0)
+  })
+
+  it('recovers after retrying a failed Purchase History request', async () => {
+    let attempt = 0
+    server.use(
+      http.get('/api/purchases', () => {
+        attempt += 1
+        if (attempt === 1) {
+          return problem(500, 'An unexpected error occurred')
+        }
+        return HttpResponse.json([])
+      }),
+    )
+
+    const user = userEvent.setup()
+    renderApp()
+
+    const historyTab = await screen.findByRole('tab', { name: 'Purchase History' })
+    await user.click(historyTab)
+
+    const retryButton = await screen.findByRole('button', { name: 'Retry loading purchase history' })
+    await user.click(retryButton)
+
+    expect(await screen.findByText('No purchases yet.')).toBeInTheDocument()
+  })
+
+  it('shows a newly completed purchase in Purchase History after switching tabs', async () => {
+    const productId = activeProducts[0].id
+    const cartId = await seedExistingCart([{ productId, quantity: 1 }])
+    window.localStorage.setItem(CART_STORAGE_KEY, cartId)
+
+    const user = userEvent.setup()
+    renderApp()
+
+    await screen.findByText(activeProducts[0].name, { selector: '.cart-item__name' })
+    const purchaseButton = await screen.findByRole('button', { name: 'Purchase' })
+    await user.click(purchaseButton)
+    await screen.findByText(/Purchase confirmed/)
+
+    const historyTab = await screen.findByRole('tab', { name: 'Purchase History' })
+    await user.click(historyTab)
+
+    expect(await screen.findByText(activeProducts[0].name)).toBeInTheDocument()
+    expect(screen.getByText(`Cart ID: ${cartId}`)).toBeInTheDocument()
+  })
+
+  it('exposes accessible names for the Shop/Purchase History tabs and the Purchase control', async () => {
+    const productId = activeProducts[0].id
+    const cartId = await seedExistingCart([{ productId, quantity: 1 }])
+    window.localStorage.setItem(CART_STORAGE_KEY, cartId)
+
+    renderApp()
+
+    expect(await screen.findByRole('tab', { name: 'Shop' })).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: 'Purchase History' })).toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: 'Purchase' })).toBeInTheDocument()
+  })
+})
