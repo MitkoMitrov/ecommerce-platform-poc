@@ -2,6 +2,16 @@
 
 A focused proof-of-concept e-commerce **Cart** vertical slice: a .NET 10 Minimal API backend backed by PostgreSQL, and a React + TypeScript frontend, demonstrating one complete, end-to-end shopping-cart flow with tests, validation, structured error handling, and health checks.
 
+## Quick start for reviewers
+
+This repository runs as three independent pieces — a PostgreSQL container, a .NET backend, and a React frontend. For the exact commands to start all three, see **[REVIEWER_GUIDE.md](REVIEWER_GUIDE.md)**; this README has the full reference detail (prerequisites, endpoints, manual smoke test, troubleshooting, scope).
+
+At a high level:
+
+1. Start PostgreSQL (`docker compose up -d postgres`).
+2. Start the API (`dotnet run --project src/Commerce.Api --launch-profile http`).
+3. Start the frontend (`npm run dev` from `src/Commerce.Web`).
+
 ## Proof-of-concept scope
 
 This repository implements exactly one vertical slice — Products, Cart, and a minimal Purchase record — end to end:
@@ -124,6 +134,24 @@ The dev server proxies `/api` and `/health` to the backend on `http://127.0.0.1:
 
 Visit **http://127.0.0.1:5173**. Adding, updating, and removing Cart items, recording a Purchase, and viewing Purchase History should all work end to end against the real backend and database.
 
+## Manual smoke test
+
+With the backend and frontend both running:
+
+1. Confirm the product catalog loads.
+2. Confirm an empty Cart is created or restored.
+3. Add at least two different products.
+4. Increase and decrease a quantity.
+5. Remove one item, then add it again.
+6. Verify line totals and the subtotal update correctly.
+7. Click Purchase and confirm a success message.
+8. Confirm the Cart becomes empty, and its ID is unchanged.
+9. Open Purchase History and confirm the entry shows Purchase ID, Cart ID, timestamp, item names, quantities, unit prices, line totals, and total with currency.
+10. Refresh the browser and confirm Purchase History is still there (it's persisted in PostgreSQL, not in-memory).
+11. Return to Shop and confirm the same Cart can be reused for another Purchase.
+
+Purchase History is global and unscoped by design (no auth in this PoC) — repeated runs, or another reviewer against the same database, will show everyone's Purchases in one list. That is expected.
+
 ## Expected local URLs
 
 | Service | URL |
@@ -221,3 +249,15 @@ docker compose up -d postgres
 
 **`npm install` / `npm ci` fails or behaves unexpectedly.**
 Confirm your Node version satisfies Vite's requirement (Node 20.19+ or 22.12+ — `node --version`). Delete `node_modules` and `package-lock.json`-derived caches if a previous partial install left the tree inconsistent, then re-run `npm install`. Use `npm ci` (not `npm install`) when you want an exact, reproducible install matching the committed `package-lock.json`.
+
+**`/health/ready` returns unhealthy.**
+This check pings PostgreSQL directly, so it means the API cannot currently reach the database. Confirm `docker compose ps` shows `postgres` as healthy and that the connection string's host/port/username/password match `compose.yaml` and the value used in step 1.
+
+**Frontend cannot reach the API, or the API is on a different port.**
+The Vite proxy target is hardcoded in `vite.config.ts` to `http://127.0.0.1:5003`. If the API isn't running there — e.g. something else already holds port 5003 — stop the conflicting process, or free the port before running `dotnet run`.
+
+**Integration tests fail because Docker is unavailable.**
+Start Docker Desktop/engine and re-run `dotnet test`. Testcontainers cannot create its disposable PostgreSQL container without a running daemon.
+
+**HTTPS certificate prompts or warnings.**
+The setup above intentionally uses the `http` launch profile (`http://localhost:5003`), which avoids the ASP.NET Core HTTPS dev certificate entirely. No certificate needs to be trusted or generated to follow these instructions.
